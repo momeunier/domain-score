@@ -1,5 +1,7 @@
 "use client";
 import { useState } from "react";
+import DomainForm from "./components/DomainForm";
+import ScoreBox from "./components/ScoreBox";
 
 interface ValidationResult {
   domain: string;
@@ -13,28 +15,45 @@ interface WhoisResult {
   whoisData: string;
 }
 
-interface AiResult {
-  analysis: string;
-}
-
 interface Results {
   validation?: ValidationResult;
-  whois?: WhoisResult;
-  aiAnalysis?: AiResult;
-  expiryScore?: {
+  mxAnalysis?: {
+    hasMxRecords: boolean;
+    hasMultipleMx: boolean;
+    hasDifferentWeights: boolean;
+    onSameDomain: boolean;
+    records: Array<{
+      priority: number;
+      exchange: string;
+    }>;
+    details: string[];
     score: number;
-    message: string;
-    daysUntilExpiry: number | null;
+    scoreDetails: string[];
+  };
+  emailSecurity?: {
+    spf: {
+      exists: boolean;
+      record: string | null;
+      details: string[];
+      score: number;
+      scoreDetails: string[];
+    };
+    dmarc: {
+      exists: boolean;
+      record: string | null;
+      details: string[];
+      score: number;
+      scoreDetails: string[];
+    };
+    totalScore: number;
   };
 }
 
 export default function Home() {
-  const [domain, setDomain] = useState("");
   const [results, setResults] = useState<Results>({});
   const [loading, setLoading] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (domain: string) => {
     setLoading(true);
     setResults({});
 
@@ -49,34 +68,23 @@ export default function Home() {
       setResults((prev) => ({ ...prev, validation: validationData }));
 
       if (validationData.isValid) {
-        // WHOIS Lookup
-        const whoisRes = await fetch("/api/whois", {
+        // MX Check
+        const mxRes = await fetch("/api/mx-check", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ domain }),
         });
-        const whoisData = await whoisRes.json();
-        setResults((prev) => ({ ...prev, whois: whoisData }));
+        const mxData = await mxRes.json();
+        setResults((prev) => ({ ...prev, mxAnalysis: mxData }));
 
-        // AI Analysis
-        if (whoisData.whoisData) {
-          const aiRes = await fetch("/api/openai", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ whoisData: whoisData.whoisData }),
-          });
-          const aiData = await aiRes.json();
-          setResults((prev) => ({ ...prev, aiAnalysis: aiData }));
-
-          // Pass the AI response directly to expiry-score
-          const expiryScoreRes = await fetch("/api/expiry-score", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(aiData), // aiData already has the format { expiry: "YYYY-MM-DD" }
-          });
-          const expiryScoreData = await expiryScoreRes.json();
-          setResults((prev) => ({ ...prev, expiryScore: expiryScoreData }));
-        }
+        // Email Security Check
+        const securityRes = await fetch("/api/email-security", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ domain }),
+        });
+        const securityData = await securityRes.json();
+        setResults((prev) => ({ ...prev, emailSecurity: securityData }));
       }
     } catch (error) {
       console.error("Error:", error);
@@ -86,148 +94,147 @@ export default function Home() {
   };
 
   return (
-    <main className="min-h-screen bg-black text-white p-8">
-      <div className="max-w-2xl mx-auto space-y-8">
-        <h1 className="text-3xl font-bold text-center mb-8">
+    <div className="min-h-screen bg-slate-100 p-4">
+      <div className="container mx-auto max-w-4xl">
+        <h1 className="text-3xl font-bold mb-6 text-slate-800">
           Domain Score Calculator
         </h1>
+        <div className="bg-white p-6 rounded-lg shadow-sm mb-6">
+          <DomainForm onSubmit={handleSubmit} />
+        </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <input
-            type="text"
-            value={domain}
-            onChange={(e) => setDomain(e.target.value)}
-            placeholder="Enter domain name"
-            className="w-full p-3 rounded bg-white text-black"
-          />
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full p-3 bg-blue-500 rounded hover:bg-blue-600 disabled:bg-blue-300"
-          >
-            Calculate Score
-          </button>
-        </form>
+        {loading && (
+          <div className="text-slate-600 p-4 text-center">Loading...</div>
+        )}
 
-        <div className="w-full max-w-md space-y-6">
-          {results.validation && (
-            <div className="p-6 border rounded-lg">
-              <h2 className="text-xl font-semibold mb-4">Domain Validation</h2>
-              <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <span className="font-medium">Domain:</span>
-                  <span className="text-blue-500">
-                    {results.validation.domain}
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <span className="font-medium">Status:</span>
-                  <span className="flex items-center">
-                    {results.validation.isValid ? (
-                      <span className="text-green-500 flex items-center gap-1">
-                        Valid <span className="text-xl">✅</span>
-                      </span>
-                    ) : (
-                      <span className="text-red-500 flex items-center gap-1">
-                        Invalid <span className="text-xl">❌</span>
-                      </span>
-                    )}
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <span className="font-medium">Score:</span>
-                  <span
-                    className={`font-semibold ${
-                      results.validation.score === 100
-                        ? "text-green-500"
-                        : results.validation.score > 50
-                        ? "text-yellow-500"
-                        : "text-red-500"
-                    }`}
-                  >
-                    {results.validation.score}%
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <span className="font-medium">Message:</span>
-                  <span className="text-gray-400">
-                    {results.validation.message}
-                  </span>
-                </div>
+        {results.validation && (
+          <ScoreBox title="Domain Validation" score={results.validation.score}>
+            <div className="space-y-4">
+              <div>
+                <h3 className="font-semibold text-sm text-slate-700">
+                  Details:
+                </h3>
+                <ul className="mt-2 space-y-1">
+                  <li className="text-sm text-slate-600">
+                    Valid: {results.validation.isValid ? "Yes" : "No"}
+                  </li>
+                  <li className="text-sm text-slate-600">
+                    Message: {results.validation.message}
+                  </li>
+                </ul>
               </div>
             </div>
-          )}
+          </ScoreBox>
+        )}
 
-          {results.whois && (
-            <div className="p-6 border rounded-lg">
-              <h2 className="text-xl font-semibold mb-4">WHOIS Data</h2>
-              <div className="flex items-center gap-2">
-                <span className="font-medium">Status:</span>
-                {results.whois.whoisData ? (
-                  <span className="text-green-500 flex items-center gap-1">
-                    Data received <span className="text-xl">✅</span>
-                  </span>
+        {results.mxAnalysis && (
+          <ScoreBox
+            title="MX Records Analysis"
+            score={results.mxAnalysis.score}
+          >
+            <div className="space-y-4">
+              <div>
+                <h3 className="font-semibold text-sm text-slate-700">
+                  Score Breakdown:
+                </h3>
+                <ul className="mt-2 space-y-1">
+                  {results.mxAnalysis.scoreDetails.map((detail, index) => (
+                    <li key={index} className="text-sm text-slate-600">
+                      {detail}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              {results.mxAnalysis.records.length > 0 && (
+                <div>
+                  <h3 className="font-semibold text-sm text-slate-700">
+                    MX Records:
+                  </h3>
+                  <ul className="mt-2 space-y-1">
+                    {results.mxAnalysis.records.map((record, index) => (
+                      <li key={index} className="text-sm text-slate-600">
+                        Priority: {record.priority} - Server: {record.exchange}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          </ScoreBox>
+        )}
+
+        {results.emailSecurity && (
+          <ScoreBox
+            title="Email Security Analysis"
+            score={results.emailSecurity.totalScore}
+          >
+            <div className="space-y-4">
+              <div>
+                <h3 className="font-semibold text-sm text-slate-700">
+                  SPF Record (Score: {results.emailSecurity.spf.score}/50)
+                </h3>
+                {results.emailSecurity.spf.exists ? (
+                  <>
+                    <p className="text-sm font-mono bg-slate-100 p-2 rounded mt-2 text-slate-700">
+                      {results.emailSecurity.spf.record}
+                    </p>
+                    <div className="mt-2">
+                      <h4 className="text-sm font-medium text-slate-700">
+                        Score Breakdown:
+                      </h4>
+                      <ul className="mt-1 space-y-1">
+                        {results.emailSecurity.spf.scoreDetails.map(
+                          (detail, index) => (
+                            <li key={index} className="text-sm text-slate-600">
+                              {detail}
+                            </li>
+                          )
+                        )}
+                      </ul>
+                    </div>
+                  </>
                 ) : (
-                  <span className="text-red-500 flex items-center gap-1">
-                    No data available <span className="text-xl">❌</span>
-                  </span>
+                  <p className="text-sm text-red-600 mt-2">
+                    No SPF record found
+                  </p>
                 )}
               </div>
-              <div className="mt-2 text-sm text-gray-500">
-                Data ready for AI analysis
+
+              <div>
+                <h3 className="font-semibold text-sm text-slate-700">
+                  DMARC Record (Score: {results.emailSecurity.dmarc.score}/50)
+                </h3>
+                {results.emailSecurity.dmarc.exists ? (
+                  <>
+                    <p className="text-sm font-mono bg-slate-100 p-2 rounded mt-2 text-slate-700">
+                      {results.emailSecurity.dmarc.record}
+                    </p>
+                    <div className="mt-2">
+                      <h4 className="text-sm font-medium text-slate-700">
+                        Score Breakdown:
+                      </h4>
+                      <ul className="mt-1 space-y-1">
+                        {results.emailSecurity.dmarc.scoreDetails.map(
+                          (detail, index) => (
+                            <li key={index} className="text-sm text-slate-600">
+                              {detail}
+                            </li>
+                          )
+                        )}
+                      </ul>
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-sm text-red-600 mt-2">
+                    No DMARC record found
+                  </p>
+                )}
               </div>
             </div>
-          )}
-
-          {results.aiAnalysis && (
-            <div className="p-6 border rounded-lg">
-              <h2 className="text-xl font-semibold mb-4">AI Analysis</h2>
-              <div className="text-gray-300 whitespace-pre-wrap">
-                {results.aiAnalysis.analysis}
-              </div>
-            </div>
-          )}
-
-          {results.expiryScore && (
-            <div className="p-6 border rounded-lg">
-              <h2 className="text-xl font-semibold mb-4">Expiry Score</h2>
-              <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <span className="font-medium">Score:</span>
-                  <span
-                    className={`font-semibold ${
-                      results.expiryScore.score === 100
-                        ? "text-green-500"
-                        : results.expiryScore.score > 50
-                        ? "text-yellow-500"
-                        : "text-red-500"
-                    }`}
-                  >
-                    {results.expiryScore.score}%
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <span className="font-medium">Message:</span>
-                  <span className="text-gray-400">
-                    {results.expiryScore.message}
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <span className="font-medium">Days Until Expiry:</span>
-                  <span className="text-gray-400">
-                    {results.expiryScore.daysUntilExpiry}
-                  </span>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
+          </ScoreBox>
+        )}
       </div>
-    </main>
+    </div>
   );
 }
