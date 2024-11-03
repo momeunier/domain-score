@@ -1,101 +1,233 @@
-import Image from "next/image";
+"use client";
+import { useState } from "react";
+
+interface ValidationResult {
+  domain: string;
+  isValid: boolean;
+  score: number;
+  message: string;
+}
+
+interface WhoisResult {
+  domain: string;
+  whoisData: string;
+}
+
+interface AiResult {
+  analysis: string;
+}
+
+interface Results {
+  validation?: ValidationResult;
+  whois?: WhoisResult;
+  aiAnalysis?: AiResult;
+  expiryScore?: {
+    score: number;
+    message: string;
+    daysUntilExpiry: number | null;
+  };
+}
 
 export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-semibold">
-              app/page.tsx
-            </code>
-            .
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
+  const [domain, setDomain] = useState("");
+  const [results, setResults] = useState<Results>({});
+  const [loading, setLoading] = useState(false);
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setResults({});
+
+    try {
+      // Domain Validation
+      const validationRes = await fetch("/api/domain-validation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ domain }),
+      });
+      const validationData = await validationRes.json();
+      setResults((prev) => ({ ...prev, validation: validationData }));
+
+      if (validationData.isValid) {
+        // WHOIS Lookup
+        const whoisRes = await fetch("/api/whois", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ domain }),
+        });
+        const whoisData = await whoisRes.json();
+        setResults((prev) => ({ ...prev, whois: whoisData }));
+
+        // AI Analysis
+        if (whoisData.whoisData) {
+          const aiRes = await fetch("/api/openai", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ whoisData: whoisData.whoisData }),
+          });
+          const aiData = await aiRes.json();
+          setResults((prev) => ({ ...prev, aiAnalysis: aiData }));
+
+          // Pass the AI response directly to expiry-score
+          const expiryScoreRes = await fetch("/api/expiry-score", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(aiData), // aiData already has the format { expiry: "YYYY-MM-DD" }
+          });
+          const expiryScoreData = await expiryScoreRes.json();
+          setResults((prev) => ({ ...prev, expiryScore: expiryScoreData }));
+        }
+      }
+    } catch (error) {
+      console.error("Error:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <main className="min-h-screen bg-black text-white p-8">
+      <div className="max-w-2xl mx-auto space-y-8">
+        <h1 className="text-3xl font-bold text-center mb-8">
+          Domain Score Calculator
+        </h1>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <input
+            type="text"
+            value={domain}
+            onChange={(e) => setDomain(e.target.value)}
+            placeholder="Enter domain name"
+            className="w-full p-3 rounded bg-white text-black"
+          />
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full p-3 bg-blue-500 rounded hover:bg-blue-600 disabled:bg-blue-300"
           >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:min-w-44"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+            Calculate Score
+          </button>
+        </form>
+
+        <div className="w-full max-w-md space-y-6">
+          {results.validation && (
+            <div className="p-6 border rounded-lg">
+              <h2 className="text-xl font-semibold mb-4">Domain Validation</h2>
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">Domain:</span>
+                  <span className="text-blue-500">
+                    {results.validation.domain}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">Status:</span>
+                  <span className="flex items-center">
+                    {results.validation.isValid ? (
+                      <span className="text-green-500 flex items-center gap-1">
+                        Valid <span className="text-xl">✅</span>
+                      </span>
+                    ) : (
+                      <span className="text-red-500 flex items-center gap-1">
+                        Invalid <span className="text-xl">❌</span>
+                      </span>
+                    )}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">Score:</span>
+                  <span
+                    className={`font-semibold ${
+                      results.validation.score === 100
+                        ? "text-green-500"
+                        : results.validation.score > 50
+                        ? "text-yellow-500"
+                        : "text-red-500"
+                    }`}
+                  >
+                    {results.validation.score}%
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">Message:</span>
+                  <span className="text-gray-400">
+                    {results.validation.message}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {results.whois && (
+            <div className="p-6 border rounded-lg">
+              <h2 className="text-xl font-semibold mb-4">WHOIS Data</h2>
+              <div className="flex items-center gap-2">
+                <span className="font-medium">Status:</span>
+                {results.whois.whoisData ? (
+                  <span className="text-green-500 flex items-center gap-1">
+                    Data received <span className="text-xl">✅</span>
+                  </span>
+                ) : (
+                  <span className="text-red-500 flex items-center gap-1">
+                    No data available <span className="text-xl">❌</span>
+                  </span>
+                )}
+              </div>
+              <div className="mt-2 text-sm text-gray-500">
+                Data ready for AI analysis
+              </div>
+            </div>
+          )}
+
+          {results.aiAnalysis && (
+            <div className="p-6 border rounded-lg">
+              <h2 className="text-xl font-semibold mb-4">AI Analysis</h2>
+              <div className="text-gray-300 whitespace-pre-wrap">
+                {results.aiAnalysis.analysis}
+              </div>
+            </div>
+          )}
+
+          {results.expiryScore && (
+            <div className="p-6 border rounded-lg">
+              <h2 className="text-xl font-semibold mb-4">Expiry Score</h2>
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">Score:</span>
+                  <span
+                    className={`font-semibold ${
+                      results.expiryScore.score === 100
+                        ? "text-green-500"
+                        : results.expiryScore.score > 50
+                        ? "text-yellow-500"
+                        : "text-red-500"
+                    }`}
+                  >
+                    {results.expiryScore.score}%
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">Message:</span>
+                  <span className="text-gray-400">
+                    {results.expiryScore.message}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">Days Until Expiry:</span>
+                  <span className="text-gray-400">
+                    {results.expiryScore.daysUntilExpiry}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-6 flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
+      </div>
+    </main>
   );
 }
