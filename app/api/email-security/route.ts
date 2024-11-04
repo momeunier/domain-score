@@ -125,6 +125,8 @@ function analyzeDMARC(record: string | null): {
   return { details, score, scoreDetails };
 }
 
+export const runtime = "edge";
+
 export async function POST(request: Request) {
   try {
     const { domain } = await request.json();
