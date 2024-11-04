@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { getMXRecords } from "@/app/utils/dns";
 import { MxAnalysisData } from "@/app/types";
 
+export const runtime = "edge";
+
 export async function POST(request: Request) {
   try {
     const { domain } = await request.json();
