@@ -1,8 +1,5 @@
 import { NextResponse } from "next/server";
-import dns from "dns";
-import { promisify } from "util";
-
-const resolveTxt = promisify(dns.resolveTxt);
+import { getSPFRecord, getDMARCRecord } from "@/app/utils/dns";
 
 interface EmailSecurityAnalysis {
   spf: {
@@ -20,32 +17,6 @@ interface EmailSecurityAnalysis {
     scoreDetails: string[];
   };
   totalScore: number;
-}
-
-async function getDmarcRecord(domain: string): Promise<string | null> {
-  try {
-    // DMARC records are stored at _dmarc.domain.com
-    const records = await resolveTxt(`_dmarc.${domain}`);
-    // DNS TXT records are returned as arrays of strings, we need to join them
-    return records[0].join("");
-  } catch (error) {
-    console.error("Error checking DMARC record:", error);
-    return null;
-  }
-}
-
-async function getSPFRecord(domain: string): Promise<string | null> {
-  try {
-    const records = await resolveTxt(domain);
-    // Find the record that starts with "v=spf1"
-    const spfRecord = records.find((record) =>
-      record[0].toLowerCase().startsWith("v=spf1")
-    );
-    return spfRecord ? spfRecord.join("") : null;
-  } catch (error) {
-    console.error("Error checking SPF record:", error);
-    return null;
-  }
 }
 
 function analyzeSPF(record: string | null): {
@@ -165,8 +136,11 @@ export async function POST(request: Request) {
       );
     }
 
-    const spfRecord = await getSPFRecord(domain);
-    const dmarcRecord = await getDmarcRecord(domain);
+    // Get both records in parallel for better performance
+    const [spfRecord, dmarcRecord] = await Promise.all([
+      getSPFRecord(domain),
+      getDMARCRecord(domain),
+    ]);
 
     const spfAnalysis = analyzeSPF(spfRecord);
     const dmarcAnalysis = analyzeDMARC(dmarcRecord);
