@@ -10,10 +10,10 @@ interface ValidationResult {
   message: string;
 }
 
-interface WhoisResult {
-  domain: string;
-  whoisData: string;
-}
+//interface WhoisResult {
+//  domain: string;
+//  whoisData: string;
+//}
 
 interface Results {
   validation?: ValidationResult;
@@ -47,6 +47,14 @@ interface Results {
     };
     totalScore: number;
   };
+  aiAnalysis?: {
+    expiry: string | null;
+  };
+  expiryScore?: {
+    score: number;
+    message: string;
+    daysUntilExpiry: number | null;
+  };
 }
 
 export default function Home() {
@@ -58,7 +66,7 @@ export default function Home() {
     setResults({});
 
     try {
-      // Domain Validation
+      // Domain Validation first as we need to know if the domain is valid
       const validationRes = await fetch("/api/domain-validation", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -68,23 +76,61 @@ export default function Home() {
       setResults((prev) => ({ ...prev, validation: validationData }));
 
       if (validationData.isValid) {
-        // MX Check
-        const mxRes = await fetch("/api/mx-check", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ domain }),
-        });
-        const mxData = await mxRes.json();
-        setResults((prev) => ({ ...prev, mxAnalysis: mxData }));
+        // Start the WHOIS and OpenAI analysis immediately
+        const expiryAnalysisPromise = (async () => {
+          const whoisRes = await fetch("/api/whois", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ domain }),
+          });
+          const whoisData = await whoisRes.json();
 
-        // Email Security Check
-        const securityRes = await fetch("/api/email-security", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ domain }),
-        });
-        const securityData = await securityRes.json();
-        setResults((prev) => ({ ...prev, emailSecurity: securityData }));
+          const aiRes = await fetch("/api/openai", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ whoisData: whoisData.whoisData }),
+          });
+          const aiData = await aiRes.json();
+          setResults((prev) => ({ ...prev, aiAnalysis: aiData }));
+
+          if (aiData.expiry) {
+            const expiryScoreRes = await fetch("/api/expiry-score", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(aiData),
+            });
+            const expiryScoreData = await expiryScoreRes.json();
+            setResults((prev) => ({ ...prev, expiryScore: expiryScoreData }));
+          }
+        })();
+
+        // Run other checks in parallel
+        const otherChecksPromise = (async () => {
+          const [mxData, securityData] = await Promise.all([
+            // MX Check
+            fetch("/api/mx-check", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ domain }),
+            }).then((res) => res.json()),
+
+            // Email Security Check
+            fetch("/api/email-security", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ domain }),
+            }).then((res) => res.json()),
+          ]);
+
+          setResults((prev) => ({
+            ...prev,
+            mxAnalysis: mxData,
+            emailSecurity: securityData,
+          }));
+        })();
+
+        // Wait for all checks to complete
+        await Promise.all([expiryAnalysisPromise, otherChecksPromise]);
       }
     } catch (error) {
       console.error("Error:", error);
@@ -230,6 +276,65 @@ export default function Home() {
                     No DMARC record found
                   </p>
                 )}
+              </div>
+            </div>
+          </ScoreBox>
+        )}
+
+        {results.expiryScore && (
+          <ScoreBox
+            title="Domain Expiry Analysis"
+            score={results.expiryScore.score}
+          >
+            <div className="space-y-4">
+              <div>
+                <h3 className="font-semibold text-sm text-slate-700">
+                  Details:
+                </h3>
+                <ul className="mt-2 space-y-2">
+                  <li className="text-sm text-slate-600">
+                    <span className="font-medium">Expiry Date:</span>{" "}
+                    <span className="font-mono bg-slate-100 px-2 py-0.5 rounded">
+                      {results.aiAnalysis?.expiry}
+                    </span>
+                  </li>
+                  <li className="text-sm text-slate-600">
+                    <span className="font-medium">Days until expiry:</span>{" "}
+                    <span className="font-mono bg-slate-100 px-2 py-0.5 rounded">
+                      {results.expiryScore.daysUntilExpiry} days
+                    </span>
+                  </li>
+                  <li className="text-sm text-slate-600">
+                    <span className="font-medium">Status:</span>{" "}
+                    <span
+                      className={`${
+                        results.expiryScore.score >= 80
+                          ? "text-green-600"
+                          : results.expiryScore.score >= 50
+                          ? "text-yellow-600"
+                          : "text-red-600"
+                      }`}
+                    >
+                      {results.expiryScore.message}
+                    </span>
+                  </li>
+                </ul>
+              </div>
+
+              <div>
+                <h3 className="font-semibold text-sm text-slate-700">
+                  Score Breakdown:
+                </h3>
+                <p className="mt-1 text-sm text-slate-600">
+                  Score is based on the number of days until expiry:
+                </p>
+                <ul className="mt-2 space-y-1 text-sm text-slate-600">
+                  <li>• 100 points: More than 6 months</li>
+                  <li>• 75 points: Between 1-6 months</li>
+                  <li>• 50 points: Between 7-30 days</li>
+                  <li>• 25 points: Less than 7 days</li>
+                  <li>• 0 points: Less than 24 hours</li>
+                </ul>
               </div>
             </div>
           </ScoreBox>
